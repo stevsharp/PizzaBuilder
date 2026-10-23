@@ -1,11 +1,13 @@
-﻿using Domain;  
+﻿using Domain;
+
+using Pizza.Console.Rule;
 
 namespace Builder;
 
 public sealed class PizzaBuilder
 {
     private readonly Domain.Pizza _pizza = Domain.Pizza.CreateEmpty();
-
+    private readonly PizzaValidator _validator = new(); 
     public PizzaBuilder Configure(Action<Domain.Pizza> configureAction)
     {
         configureAction?.Invoke(_pizza);
@@ -14,12 +16,7 @@ public sealed class PizzaBuilder
 
     public PizzaBuilder AddIngredient(Func<Domain.Ingredient> ingredientFactory)
     {
-        var ingredient = ingredientFactory();
-
-        if (ingredient is null)
-        {
-            throw new ArgumentNullException(nameof(ingredientFactory), "Ingredient factory returned null.");
-        }
+        var ingredient = ingredientFactory() ?? throw new ArgumentNullException(nameof(ingredientFactory), "Ingredient factory returned null.");
 
         _pizza.PizzaIngredients.Add(new Domain.PizzaIngredient
         {
@@ -40,8 +37,7 @@ public sealed class PizzaBuilder
 
     public Domain.Pizza Build()
     {
-        if (string.IsNullOrWhiteSpace(_pizza.Name))
-            _pizza.Name = "Custom Pizza";
+        _validator.ValidateAndThrow(_pizza);
 
         return _pizza;
     }
