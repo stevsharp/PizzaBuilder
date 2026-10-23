@@ -1,0 +1,360 @@
+﻿@page "/"
+@rendermode InteractiveServer
+@inject IPizzaService PizzaService
+@inject IPizzaBuilder Builder
+@inject NavigationManager Navigation
+@inject ILogger<Home> Logger
+
+<PageTitle>Build your pizza</PageTitle>
+
+<h1 class="mb-4">Build your pizza</h1>
+
+@if (_catalog is null)
+{
+    <p><em>Loading the topping catalog…</em></p>
+}
+else
+{
+    <div class="row g-4">
+        <div class="col-lg-8">
+
+            <section class="mb-4">
+                <h2 class="h5">Start from a classic</h2>
+                <div class="d-flex flex-wrap gap-2 align-items-center">
+                    @foreach (var preset in PizzaDirector.Presets)
+                    {
+                        <button type="button" class="btn btn-outline-secondary btn-sm" @onclick="() => ApplyPreset(preset)">@preset</button>
+                    }
+                    <button type="button" class="btn btn-link btn-sm" @onclick="StartOver">Start over</button>
+                </div>
+            </section>
+
+            <section class="mb-4">
+                <label for="pizza-name" class="form-label fw-semibold">Name your creation</label>
+                <input id="pizza-name" class="form-control" maxlength="@PizzaBuilder.MaxNameLength" placeholder="Custom pizza"
+                       @bind="_name" @bind:event="oninput" @bind:after="NameChanged" />
+            </section>
+
+            <section class="mb-4">
+                <h2 class="h5">Size</h2>
+                <div class="btn-group" role="group" aria-label="Pizza size">
+                    @foreach (var size in Enum.GetValues<PizzaSize>())
+                    {
+                        <button type="button" class="btn @(size == _draft.Size ? "btn-primary" : "btn-outline-primary")"
+                                @onclick="() => Apply(b => b.OfSize(size))">
+                            @size.Label()
+                            <small class="d-block">@Money.Format(PizzaPricing.BasePrice(size))</small>
+                        </button>
+                    }
+                </div>
+            </section>
+
+            <section class="mb-4">
+                <h2 class="h5">Crust</h2>
+                <div class="btn-group flex-wrap" role="group" aria-label="Crust">
+                    @foreach (var crust in Enum.GetValues<CrustType>())
+                    {
+                        <button type="button" class="btn @(crust == _draft.Crust ? "btn-primary" : "btn-outline-primary")"
+                                @onclick="() => Apply(b => b.WithCrust(crust))">
+                            @crust.Label()
+                            <small class="d-block">@Surcharge(PizzaPricing.CrustSurcharge(crust))</small>
+                        </button>
+                    }
+                </div>
+            </section>
+
+            <section class="mb-4">
+                <h2 class="h5">Sauce</h2>
+                <div class="btn-group flex-wrap" role="group" aria-label="Sauce">
+                    @foreach (var sauce in Enum.GetValues<SauceType>())
+                    {
+                        <button type="button" class="btn @(sauce == _draft.Sauce ? "btn-primary" : "btn-outline-primary")"
+                                @onclick="() => Apply(b => b.WithSauce(sauce))">
+                            @sauce.Label()
+                            <small class="d-block">@Surcharge(PizzaPricing.SauceSurcharge(sauce))</small>
+                        </button>
+                    }
+                </div>
+            </section>
+
+            <section class="mb-4">
+                <h2 class="h5">
+                    Toppings
+                    <span class="text-muted small">(@_draft.ToppingPortions / @PizzaBuilder.MaxToppingPortions portions)</span>
+                </h2>
+                <p class="text-muted small mb-2">
+                    Prices are per portion on a medium pizza (×@PizzaPricing.ToppingMultiplier(_draft.Size) for @_draft.Size.ToString().ToLowerInvariant()).
+                </p>
+                <div class="d-flex flex-wrap gap-2 mb-2">
+                    <button type="button" class="btn btn-outline-secondary btn-sm" @onclick="AddAllVegetables">Add all vegetables</button>
+                    <button type="button" class="btn btn-outline-secondary btn-sm" disabled="@(_draft.Toppings.Count == 0)" @onclick="DoubleToppings">Double every topping</button>
+                    <button type="button" class="btn btn-outline-secondary btn-sm" disabled="@(_draft.Toppings.Count == 0)" @onclick="ClearToppings">Clear toppings</button>
+                </div>
+
+                @foreach (var group in _catalog.GroupBy(t => t.Category).OrderBy(g => g.Key))
+                {
+                    <h3 class="h6 mt-3">@group.Key.Label()</h3>
+                    <div class="row row-cols-1 row-cols-md-2 g-2">
+                        @foreach (var topping in group.OrderBy(t => t.Name))
+                        {
+                            var quantity = QuantityOf(topping);
+                            <div class="col">
+                                <div class="d-flex align-items-center justify-content-between border rounded p-2 h-100
+                                            @(quantity > 0 ? "border-primary bg-primary-subtle" : "")
+                                            @(topping.IsAvailable ? "" : "opacity-50")">
+                                    <div class="form-check mb-0">
+                                        <input class="form-check-input" type="checkbox" id="topping-@topping.Id"
+                                               checked="@(quantity > 0)" disabled="@(!topping.IsAvailable)"
+                                               @onchange="e => ToggleTopping(topping, e.Value is true)" />
+                                        <label class="form-check-label" for="topping-@topping.Id">
+                                            @topping.Name
+                                            <span class="text-muted small">@Money.Format(topping.Price)</span>
+                                            @if (!topping.IsAvailable)
+                                            {
+                                                <span class="badge text-bg-secondary ms-1">unavailable</span>
+                                            }
+                                        </label>
+                                    </div>
+                                    @if (quantity > 0)
+                                    {
+                                        <div class="btn-group btn-group-sm" role="group" aria-label="Quantity">
+                                            <button type="button" class="btn btn-outline-secondary"
+                                                    @onclick="() => Apply(b => b.AddTopping(topping, quantity - 1))">−</button>
+                                            <span class="btn btn-outline-secondary disabled">@(quantity)×</span>
+                                            <button type="button" class="btn btn-outline-secondary"
+                                                    disabled="@(quantity >= PizzaBuilder.MaxQuantityPerTopping)"
+                                                    @onclick="() => Apply(b => b.AddTopping(topping, quantity + 1))">+</button>
+                                        </div>
+                                    }
+                                </div>
+                            </div>
+                        }
+                    </div>
+                }
+            </section>
+
+            <section class="mb-4">
+                <div class="form-check form-switch">
+                    <input class="form-check-input" type="checkbox" id="extra-cheese" checked="@_draft.ExtraCheese"
+                           @onchange="e => Apply(b => b.WithExtraCheese(e.Value is true))" />
+                    <label class="form-check-label" for="extra-cheese">
+                        Extra cheese <span class="text-muted small">(@Money.Format(PizzaPricing.ExtraCheesePrice) on a medium)</span>
+                    </label>
+                </div>
+            </section>
+
+            <section class="mb-4">
+                <label for="pizza-budget" class="form-label fw-semibold">Budget <span class="text-muted small fw-normal">(optional, adds a validation rule)</span></label>
+                <div class="input-group" style="max-width: 14rem">
+                    <span class="input-group-text">€</span>
+                    <input id="pizza-budget" type="number" class="form-control" min="0" step="0.50" placeholder="no limit"
+                           @bind="_budget" @bind:event="oninput" @bind:after="Refresh" />
+                </div>
+            </section>
+
+            <section class="mb-4">
+                <label for="pizza-notes" class="form-label fw-semibold">Notes for the kitchen</label>
+                <textarea id="pizza-notes" class="form-control" rows="2" maxlength="500" placeholder="Well done, cut in squares…"
+                          @bind="_notes" @bind:event="oninput" @bind:after="NotesChanged"></textarea>
+            </section>
+        </div>
+
+        <div class="col-lg-4">
+            <div class="card sticky-lg-top" style="top: 1rem">
+                <div class="card-header fw-semibold">Your pizza</div>
+                <div class="card-body">
+                    <h3 class="h5">@_draft.Name</h3>
+                    <ul class="list-unstyled mb-3">
+                        <li>@_draft.Size.Label()</li>
+                        <li>@_draft.Crust.Label() crust</li>
+                        <li>@_draft.Sauce.Label()</li>
+                        @foreach (var (topping, quantity) in _draft.Toppings)
+                        {
+                            <li>@(quantity > 1 ? $"{quantity}× " : string.Empty)@topping.Name</li>
+                        }
+                        @if (_draft.ExtraCheese)
+                        {
+                            <li>Extra cheese</li>
+                        }
+                    </ul>
+
+                    <table class="table table-sm mb-3">
+                        <tbody>
+                            <tr><td>Base</td><td class="text-end">@Money.Format(_draft.Price.Base)</td></tr>
+                            <tr><td>Crust</td><td class="text-end">@Money.Format(_draft.Price.Crust)</td></tr>
+                            <tr><td>Sauce</td><td class="text-end">@Money.Format(_draft.Price.Sauce)</td></tr>
+                            <tr><td>Toppings</td><td class="text-end">@Money.Format(_draft.Price.Toppings)</td></tr>
+                            <tr><td>Extra cheese</td><td class="text-end">@Money.Format(_draft.Price.ExtraCheese)</td></tr>
+                        </tbody>
+                        <tfoot>
+                            <tr class="fw-bold"><td>Total</td><td class="text-end">@Money.Format(_draft.Price.Total)</td></tr>
+                        </tfoot>
+                    </table>
+
+                    @if (!_draft.IsValid)
+                    {
+                        <div class="alert alert-warning py-2">
+                            <ul class="mb-0 ps-3">
+                                @foreach (var problem in _draft.Problems)
+                                {
+                                    <li>@problem</li>
+                                }
+                            </ul>
+                        </div>
+                    }
+
+                    @if (_error is not null)
+                    {
+                        <div class="alert alert-danger py-2">@_error</div>
+                    }
+
+                    <button type="button" class="btn btn-success w-100" disabled="@(!_draft.IsValid || _saving)" @onclick="SaveAsync">
+                        @(_saving ? "Saving…" : "Save pizza")
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+}
+
+@code {
+    [SupplyParameterFromQuery(Name = "from")]
+    public int? FromPizzaId { get; set; }
+
+    private IReadOnlyList<Topping>? _catalog;
+    private PizzaDirector? _director;
+    private PizzaDraft _draft = default!;
+    private string _name = string.Empty;
+    private string? _notes;
+    private decimal? _budget;
+    private bool _saving;
+    private string? _error;
+
+    protected override async Task OnInitializedAsync()
+    {
+        Builder
+            // Func<PizzaDraft, string?>: a custom rule that reads the budget field on every preview/build.
+            .WithRule(draft => _budget is { } budget && draft.Price.Total > budget
+                ? $"Over your budget of {Money.Format(budget)} by {Money.Format(draft.Price.Total - budget)}."
+                : null)
+            // Action<Pizza>: runs for every product the builder creates.
+            .OnBuilt(pizza => Logger.LogInformation("Pizza built: {Pizza}", pizza));
+
+        _draft = Builder.Preview();
+
+        var catalog = await PizzaService.GetToppingsAsync(includeUnavailable: true);
+
+        _director = new PizzaDirector(catalog);
+
+        if (FromPizzaId is { } id && await PizzaService.GetPizzaAsync(id) is { } existing)
+        {
+            LoadFrom(existing, catalog);
+        }
+
+        _catalog = catalog;
+        Refresh();
+    }
+
+    private void Apply(Func<IPizzaBuilder, IPizzaBuilder> step)
+    {
+        step(Builder);
+        Refresh();
+    }
+
+    private void Refresh()
+    {
+        _draft = Builder.Preview();
+        _error = null;
+    }
+
+    private void NameChanged() => Apply(b => b.Named(_name));
+
+    private void NotesChanged() => Apply(b => b.WithNotes(_notes));
+
+    private int QuantityOf(Topping topping) =>
+        _draft.Toppings.FirstOrDefault(t => t.Topping.Id == topping.Id).Quantity;
+
+    private void ToggleTopping(Topping topping, bool selected) =>
+        Apply(b => selected ? b.AddTopping(topping) : b.RemoveTopping(topping));
+
+    // Func<Topping, bool> selects which catalog items to add.
+    private void AddAllVegetables() =>
+        Apply(b => b.AddToppings(_catalog!, where: t => t.Category == ToppingCategory.Vegetable && t.IsAvailable));
+
+    // Func<Topping, int> decides the new quantity per topping (the builder caps it).
+    private void DoubleToppings() =>
+        Apply(b => b.AddToppings(_draft.Toppings.Select(t => t.Topping), quantity: t => QuantityOf(t) * 2));
+
+    // Action<IPizzaBuilder> groups several steps into one block.
+    private void ClearToppings() =>
+        Apply(b => b.Configure(builder =>
+        {
+            foreach (var (topping, _) in _draft.Toppings)
+            {
+                builder.RemoveTopping(topping);
+            }
+        }));
+
+    private void ApplyPreset(string preset)
+    {
+        _director!.Construct(preset, Builder);
+        Refresh();
+        _name = _draft.Name;
+        _notes = _draft.Notes;
+    }
+
+    private void StartOver()
+    {
+        Builder.Reset();
+        _name = string.Empty;
+        _notes = null;
+        Refresh();
+    }
+
+    /// <summary>Replays an existing pizza through the builder so it can be tweaked and saved again.</summary>
+    private void LoadFrom(PizzaSummary pizza, IReadOnlyList<Topping> catalog)
+    {
+        Builder.Reset()
+            .Named(pizza.Name)
+            .OfSize(pizza.Size)
+            .WithCrust(pizza.Crust)
+            .WithSauce(pizza.Sauce)
+            .WithExtraCheese(pizza.ExtraCheese)
+            .WithNotes(pizza.Notes);
+
+        foreach (var line in pizza.Toppings)
+        {
+            var topping = catalog.FirstOrDefault(t => t.Id == line.ToppingId);
+            if (topping is not null)
+            {
+                Builder.AddTopping(topping, line.Quantity);
+            }
+        }
+
+        _name = pizza.Name;
+        _notes = pizza.Notes;
+    }
+
+    private async Task SaveAsync()
+    {
+        _saving = true;
+        _error = null;
+        try
+        {
+            // Func<Pizza, Task<Pizza>>: build the product and hand it straight to the persistence service.
+            var saved = await Builder.Build(pizza => PizzaService.SaveAsync(pizza));
+            Navigation.NavigateTo($"/pizzas?highlight={saved.Id}");
+        }
+        catch (PizzaBuildException ex)
+        {
+            _error = ex.Message;
+            Refresh();
+        }
+        finally
+        {
+            _saving = false;
+        }
+    }
+
+    private static string Surcharge(decimal amount) => amount == 0 ? "included" : "+" + Money.Format(amount);
+}

@@ -1,0 +1,80 @@
+@page "/pizzas"
+@rendermode InteractiveServer
+@inject IPizzaService PizzaService
+@inject IJSRuntime JS
+
+<PageTitle>Saved pizzas</PageTitle>
+
+<h1 class="mb-4">Saved pizzas</h1>
+
+@if (_pizzas is null)
+{
+    <p><em>Loading…</em></p>
+}
+else if (_pizzas.Count == 0)
+{
+    <p>No pizzas yet. <a href="/">Build one!</a></p>
+}
+else
+{
+    <div class="table-responsive">
+        <table class="table align-middle">
+            <thead>
+                <tr>
+                    <th>Name</th>
+                    <th>Size</th>
+                    <th>Crust</th>
+                    <th>Sauce</th>
+                    <th>Toppings</th>
+                    <th class="text-end">Price</th>
+                    <th>Created</th>
+                    <th></th>
+                </tr>
+            </thead>
+            <tbody>
+                @foreach (var pizza in _pizzas)
+                {
+                    <tr class="@(pizza.Id == Highlight ? "table-success" : null)">
+                        <td>
+                            <strong>@pizza.Name</strong>
+                            @if (pizza.Notes is not null)
+                            {
+                                <div class="small text-muted">@pizza.Notes</div>
+                            }
+                        </td>
+                        <td>@pizza.Size.Label()</td>
+                        <td>@pizza.Crust.Label()</td>
+                        <td>@pizza.Sauce.Label()</td>
+                        <td>@pizza.ToppingsText</td>
+                        <td class="text-end">@Money.Format(pizza.Price)</td>
+                        <td title="@pizza.CreatedAt.ToLocalTime().ToString("f")">@pizza.CreatedAt.ToLocalTime().ToString("g")</td>
+                        <td class="text-nowrap">
+                            <a class="btn btn-sm btn-outline-primary me-1" href="/?from=@pizza.Id">Build again</a>
+                            <button type="button" class="btn btn-sm btn-outline-danger" @onclick="() => DeleteAsync(pizza)">Delete</button>
+                        </td>
+                    </tr>
+                }
+            </tbody>
+        </table>
+    </div>
+}
+
+@code {
+    [SupplyParameterFromQuery]
+    public int? Highlight { get; set; }
+
+    private IReadOnlyList<PizzaSummary>? _pizzas;
+
+    protected override async Task OnInitializedAsync() => _pizzas = await PizzaService.GetSavedPizzasAsync();
+
+    private async Task DeleteAsync(PizzaSummary pizza)
+    {
+        if (!await JS.InvokeAsync<bool>("confirm", $"Delete \"{pizza.Name}\"?"))
+        {
+            return;
+        }
+
+        await PizzaService.DeleteAsync(pizza.Id);
+        _pizzas = await PizzaService.GetSavedPizzasAsync();
+    }
+}
